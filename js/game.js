@@ -1,8 +1,8 @@
 import * as THREE from "https://unpkg.com/three@0.160.1/build/three.module.js";
-import { DIMS, FOES, BOSSES, WEAPONS, QUESTS, MUSEUM, GAME } from "./data.js";
-import { createCharacter, animateWalk } from "./chars.js";
+import { DIMS, FOES, BOSSES, QUESTS } from "./data.js";
+import { createCharacter, animateWalk, makeGreenPortal, tex } from "./chars.js";
 
-const GAP = 420;
+const GAP = 500;
 const $ = (s) => document.querySelector(s);
 
 const state = {
@@ -12,59 +12,52 @@ const state = {
   level: 1,
   cash: 40,
   dim: 0,
-  weapon: 0,
-  kills: {},
-  bosses: {},
+  selectedDim: 0,
   quest: 0,
   unlocked: { earth: true, citadel: true, meeseeks: true },
-  god: true, // Rick is OP
+  kills: {},
+  bosses: {},
 };
 
-let scene, camera, renderer, clock;
-let rick, yaw = 0, pitch = 0.28;
+let scene, camera, renderer, clock, raycaster;
+let player, yaw = Math.PI, pitch = 0.18;
 let keys = {};
-let enemies = [];
-let bullets = [];
-let portals = [null, null];
-let lastShot = 0;
-let grounded = true;
-let vy = 0;
 let lock = false;
+let vy = 0;
+let grounded = true;
+let enemies = [];
 let npcs = [];
-let particles = [];
-let worldRoot;
+let portalMesh = null;
+let portalTex;
+let moving = false;
 
-const listener = { x: 0, z: 0 };
-
-function dimOrigin(i) {
+function origin(i) {
   return new THREE.Vector3(i * GAP, 0, 0);
 }
 
 function toast(title, body) {
-  const w = $("#toasts");
   const d = document.createElement("div");
   d.className = "toast";
   d.innerHTML = `<b>${title}</b><div>${body || ""}</div>`;
-  w.prepend(d);
-  setTimeout(() => d.remove(), 4200);
+  $("#toasts").prepend(d);
+  setTimeout(() => d.remove(), 3800);
 }
 
 function save() {
   localStorage.setItem("rickrift", JSON.stringify(state));
 }
-function load() {
+function loadSave() {
   try {
     const s = JSON.parse(localStorage.getItem("rickrift") || "null");
-    if (s && s.hp) Object.assign(state, s);
+    if (s?.hp) Object.assign(state, s);
   } catch {}
 }
 
-function mat(c) {
-  return new THREE.MeshLambertMaterial({ color: c });
+function plastic(c) {
+  return new THREE.MeshStandardMaterial({ color: c, roughness: 0.45, metalness: 0.06 });
 }
-
-function box(w, h, d, c, x, y, z, parent) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c));
+function part(geo, mat, x, y, z, parent) {
+  const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
   m.castShadow = true;
   m.receiveShadow = true;
@@ -72,148 +65,141 @@ function box(w, h, d, c, x, y, z, parent) {
   return m;
 }
 
-function portalRing(parent, pos, color) {
+function buildGarage(root) {
   const g = new THREE.Group();
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(1.6, 0.18, 10, 28),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 })
-  );
-  ring.rotation.y = Math.PI / 2;
-  g.add(ring);
-  const glow = new THREE.PointLight(color, 2.2, 12);
-  g.add(glow);
-  g.position.copy(pos);
-  parent.add(g);
-  g.userData.spin = ring;
-  return g;
-}
-
-function buildDimension(i, root) {
-  const d = DIMS[i];
-  const o = dimOrigin(i);
-  const g = new THREE.Group();
-  g.position.copy(o);
+  g.position.copy(origin(0));
   root.add(g);
 
-  const ground = new THREE.Mesh(
-    new THREE.BoxGeometry(220, 2, 220),
-    new THREE.MeshLambertMaterial({ color: d.color })
-  );
-  ground.position.y = -1;
-  ground.receiveShadow = true;
-  g.add(ground);
+  // interior
+  part(new THREE.BoxGeometry(28, 0.4, 22), plastic(0x6a6e72), 0, 0, 0, g); // floor
+  part(new THREE.BoxGeometry(28, 10, 0.4), plastic(0xc8b89a), 0, 5, -11, g); // back wall
+  part(new THREE.BoxGeometry(0.4, 10, 22), plastic(0xc8b89a), -14, 5, 0, g);
+  part(new THREE.BoxGeometry(0.4, 10, 22), plastic(0xc8b89a), 14, 5, 0, g);
+  part(new THREE.BoxGeometry(28, 0.4, 22), plastic(0x4a4e52), 0, 10, 0, g); // ceiling
+  // open garage door frame
+  part(new THREE.BoxGeometry(8, 10, 0.4), plastic(0x8a9094), -10, 5, 11, g);
+  part(new THREE.BoxGeometry(8, 10, 0.4), plastic(0x8a9094), 10, 5, 11, g);
+  part(new THREE.BoxGeometry(12, 2, 0.4), plastic(0x8a9094), 0, 9, 11, g);
 
-  // unique silhouettes
-  if (d.id === "earth") {
-    box(28, 16, 22, 0xe8dcc0, -18, 8, -16, g);
-    box(30, 2, 24, 0x8a3030, -18, 16.6, -16, g);
-    box(16, 12, 14, 0x8a9098, 2, 6, -8, g); // garage
-    box(10, 14, 1.2, 0x40ffe6, 2, 8, -14.4, g); // portal device
-    box(80, 0.4, 18, 0x333338, 8, 0.2, 20, g); // street
-    for (let t = 0; t < 8; t++) {
-      box(1.2, 8, 1.2, 0x6a4420, 20 + (t % 4) * 10, 4, -6 - Math.floor(t / 4) * 12, g);
-      const leaves = new THREE.Mesh(new THREE.SphereGeometry(3.2, 10, 8), mat(0x2e8a3a));
-      leaves.position.set(20 + (t % 4) * 10, 10, -6 - Math.floor(t / 4) * 12);
-      g.add(leaves);
-    }
-    box(18, 10, 14, 0x3a6a44, 40, 5, 28, g); // shop
-  } else if (d.id === "citadel") {
-    for (let n = 0; n < 12; n++) {
-      box(8, 28 + (n % 5) * 6, 8, 0x445588, Math.cos(n) * 40, 16, Math.sin(n) * 40, g);
-    }
-    box(50, 4, 50, 0x223355, 0, 2, 0, g);
-  } else if (d.id === "meeseeks") {
-    box(24, 18, 24, 0x2aa8e8, 0, 9, 0, g);
-    for (let n = 0; n < 16; n++) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(2.2, 10, 8), mat(0x3ec4f0));
-      s.position.set((n % 8) * 8 - 28, 2.2, Math.floor(n / 8) * 16 - 8);
-      g.add(s);
-    }
-  } else if (d.id === "federation") {
-    box(80, 20, 16, 0x776655, 0, 10, -30, g);
-    for (let n = -3; n <= 3; n++) box(6, 14, 6, 0xaa8844, n * 12, 7, 10, g);
-  } else if (d.id === "unity") {
-    for (let n = 0; n < 7; n++) {
-      const dome = new THREE.Mesh(new THREE.SphereGeometry(8, 12, 10), mat(0xaa66cc));
-      dome.position.set(Math.cos(n) * 28, 4, Math.sin(n) * 28);
-      g.add(dome);
-    }
-  } else if (d.id === "purge") {
-    box(30, 18, 30, 0x661111, 0, 9, -20, g);
-    for (let n = 0; n < 10; n++) box(3, 8, 3, 0x331111, -40 + n * 8, 4, 24, g);
-  } else if (d.id === "microverse") {
-    box(40, 6, 40, 0x226655, 0, 3, 0, g);
-    box(8, 22, 8, 0x44aa88, 0, 14, 0, g);
-  } else if (d.id === "dream") {
-    box(200, 1, 200, 0x110018, 0, 0.2, 0, g);
-    for (let n = 0; n < 9; n++) {
-      box(4, 16, 4, 0x442266, Math.cos(n * 0.7) * 30, 8, Math.sin(n * 0.7) * 30, g);
-    }
-  } else if (d.id === "cromulon") {
-    const star = new THREE.Mesh(new THREE.SphereGeometry(90, 16, 12), new THREE.MeshBasicMaterial({ color: 0x001133 }));
-    star.position.y = 40;
-    g.add(star);
-    box(80, 2, 80, 0x224466, 0, 0, 0, g);
-  } else {
-    box(60, 8, 60, 0x222222, 0, 4, 0, g);
-    for (let n = 0; n < 6; n++) box(10, 18, 10, 0x111111, Math.cos(n) * 24, 9, Math.sin(n) * 24, g);
+  // workbench
+  part(new THREE.BoxGeometry(8, 0.3, 2.4), plastic(0x6b4423), -8, 2.2, -8, g);
+  part(new THREE.BoxGeometry(0.3, 2.1, 0.3), plastic(0x3a2a18), -11.5, 1.05, -8.8, g);
+  part(new THREE.BoxGeometry(0.3, 2.1, 0.3), plastic(0x3a2a18), -4.5, 1.05, -8.8, g);
+  // bottles
+  for (let i = 0; i < 6; i++) {
+    const b = part(new THREE.CylinderGeometry(0.12, 0.14, 0.5, 8), plastic(i % 2 ? 0x44ff88 : 0x88aaff), -11 + i * 0.9, 2.6, -8, g);
+    b.material.emissive = new THREE.Color(i % 2 ? 0x118822 : 0x112266);
+    b.material.emissiveIntensity = 0.4;
   }
+  // shelves
+  for (let y = 3; y <= 7; y += 2) {
+    part(new THREE.BoxGeometry(6, 0.15, 1.2), plastic(0x5a4030), 10.5, y, -9.5, g);
+  }
+  // hanging car (simple)
+  part(new THREE.BoxGeometry(6, 1.6, 3), plastic(0x2a62c8), 0, 1.2, -3, g);
+  part(new THREE.SphereGeometry(0.55, 10, 8), plastic(0x222), -2.2, 0.55, -4.1, g);
+  part(new THREE.SphereGeometry(0.55, 10, 8), plastic(0x222), 2.2, 0.55, -4.1, g);
+  part(new THREE.SphereGeometry(0.55, 10, 8), plastic(0x222), -2.2, 0.55, -1.9, g);
+  part(new THREE.SphereGeometry(0.55, 10, 8), plastic(0x222), 2.2, 0.55, -1.9, g);
 
-  const pad = portalRing(g, new THREE.Vector3(8, 2.2, 6), 0x40ffe6);
-  pad.userData.home = true;
-  g.userData.spawn = new THREE.Vector3(o.x + 6, 1.2, o.z + 10);
-  g.userData.bossSpot = new THREE.Vector3(o.x, 1.2, o.z - 40);
+  // neon portal deco on back wall
+  const deco = new THREE.Mesh(
+    new THREE.TorusGeometry(1.4, 0.12, 8, 24),
+    new THREE.MeshBasicMaterial({ color: 0x7cff3a })
+  );
+  deco.position.set(0, 5.2, -10.6);
+  g.add(deco);
+  const pl = new THREE.PointLight(0x88ff44, 2.2, 18);
+  pl.position.set(0, 5, -8);
+  g.add(pl);
+  const lamp = new THREE.PointLight(0xffe6aa, 1.6, 20);
+  lamp.position.set(0, 8.5, 0);
+  g.add(lamp);
 
-  // lights
-  const l = new THREE.PointLight(d.fog, 1.1, 80);
-  l.position.set(0, 18, 8);
-  g.add(l);
+  // street
+  part(new THREE.BoxGeometry(80, 0.3, 40), plastic(0x3a3a40), 0, -0.05, 32, g);
+  part(new THREE.BoxGeometry(80, 0.05, 0.4), plastic(0xf0d24a), 0, 0.14, 32, g);
+  // house
+  part(new THREE.BoxGeometry(18, 12, 14), plastic(0xe2d4b8), -28, 6, 8, g);
+  part(new THREE.BoxGeometry(20, 1.2, 16), plastic(0x8a3030), -28, 12.4, 8, g);
+  // grass
+  part(new THREE.BoxGeometry(90, 0.2, 90), plastic(0x3d8a45), 0, -0.2, 10, g);
 
-  spawnWave(d, o, 8);
-  spawnNpcs(d, o);
+  g.userData.spawn = new THREE.Vector3(0, 0, 2);
   return g;
 }
 
-function spawnNpcs(d, o) {
-  if (d.id === "earth") {
-    placeNpc("morty", o.x + 10, o.z + 8, "Don't do the thing. You're gonna do the thing.");
-    placeNpc("summer", o.x + 18, o.z + 4, "Grandpa, if you're OP just end the HOA.");
-    placeNpc("jerry", o.x + 24, o.z + 12, "I made apples. That's... that's my thing.");
-    placeNpc("birdperson", o.x - 8, o.z + 16, "In bird culture, this is considered a sick opening.");
+function buildDim(i, root) {
+  if (i === 0) return buildGarage(root);
+  const d = DIMS[i];
+  const g = new THREE.Group();
+  g.position.copy(origin(i));
+  root.add(g);
+  part(new THREE.BoxGeometry(90, 0.5, 90), plastic(d.color), 0, -0.25, 0, g);
+  const sky = new THREE.PointLight(d.fog, 1.4, 70);
+  sky.position.set(0, 20, 0);
+  g.add(sky);
+
+  if (d.id === "citadel") {
+    for (let n = 0; n < 10; n++) {
+      const h = 14 + (n % 4) * 8;
+      part(new THREE.BoxGeometry(7, h, 7), plastic(0x4a5a88), Math.cos(n * 0.7) * 22, h / 2, Math.sin(n * 0.7) * 22, g);
+    }
+    part(new THREE.BoxGeometry(30, 2, 30), plastic(0x223355), 0, 1, 0, g);
+  } else if (d.id === "meeseeks") {
+    part(new THREE.BoxGeometry(36, 16, 36), plastic(0x1e90c8), 0, 8, 0, g);
+    part(new THREE.BoxGeometry(34, 14, 34), plastic(0x3ec4f0), 0, 8, 0, g);
+    for (let n = 0; n < 8; n++) {
+      part(new THREE.SphereGeometry(1.6, 12, 10), plastic(0x3ec4f0), -12 + (n % 4) * 8, 1.6, -8 + Math.floor(n / 4) * 10, g);
+    }
+  } else if (d.id === "federation") {
+    part(new THREE.BoxGeometry(70, 12, 18), plastic(0x776655), 0, 6, -16, g);
+    for (let n = -4; n <= 4; n++) part(new THREE.BoxGeometry(5, 10, 5), plastic(0xaa8844), n * 8, 5, 8, g);
+  } else if (d.id === "unity") {
+    for (let n = 0; n < 6; n++) {
+      part(new THREE.SphereGeometry(6, 14, 12), plastic(0xaa66cc), Math.cos(n) * 18, 6, Math.sin(n) * 18, g);
+    }
+  } else if (d.id === "purge") {
+    part(new THREE.BoxGeometry(24, 16, 24), plastic(0x661111), 0, 8, -12, g);
+    for (let n = 0; n < 8; n++) part(new THREE.BoxGeometry(2.5, 7, 2.5), plastic(0x331111), -24 + n * 7, 3.5, 16, g);
+  } else if (d.id === "microverse") {
+    part(new THREE.BoxGeometry(40, 4, 40), plastic(0x226655), 0, 2, 0, g);
+    part(new THREE.BoxGeometry(8, 20, 8), plastic(0x44aa88), 0, 12, 0, g);
+  } else if (d.id === "dream") {
+    part(new THREE.BoxGeometry(80, 0.4, 80), plastic(0x140018), 0, 0.1, 0, g);
+    for (let n = 0; n < 8; n++) part(new THREE.BoxGeometry(3, 14, 3), plastic(0x442266), Math.cos(n) * 18, 7, Math.sin(n) * 18, g);
+  } else if (d.id === "cromulon") {
+    part(new THREE.BoxGeometry(70, 1, 70), plastic(0x224466), 0, 0.4, 0, g);
+    part(new THREE.SphereGeometry(12, 20, 16), plastic(0xffdd55), 0, 14, -20, g);
+  } else {
+    part(new THREE.BoxGeometry(50, 6, 50), plastic(0x161616), 0, 3, 0, g);
+    for (let n = 0; n < 5; n++) part(new THREE.BoxGeometry(8, 16, 8), plastic(0x111), Math.cos(n * 1.2) * 16, 8, Math.sin(n * 1.2) * 16, g);
   }
-  if (d.id === "citadel") placeNpc("morty", o.x + 4, o.z + 6, "There's a Morty with an eyepatch. That's never good.");
+  g.userData.spawn = new THREE.Vector3(0, 0, 8);
+  spawnWave(i, 7);
+  return g;
 }
 
-function placeNpc(id, x, z, line) {
-  const n = createCharacter(id);
-  n.position.set(x, 0, z);
-  n.userData.npc = true;
-  n.userData.line = line;
-  n.userData.hp = 9999;
-  scene.add(n);
-  npcs.push(n);
-}
-
-function spawnWave(d, o, count) {
-  for (let i = 0; i < count; i++) {
-    spawnEnemy(d.enemy, o.x + (Math.random() - 0.5) * 70, o.z - 10 + (Math.random() - 0.5) * 50);
+function spawnWave(dimIndex, n) {
+  const d = DIMS[dimIndex];
+  const o = origin(dimIndex);
+  for (let i = 0; i < n; i++) {
+    spawnEnemy(d.enemy, o.x + (Math.random() - 0.5) * 40, o.z - 8 + (Math.random() - 0.5) * 28);
   }
 }
 
-function spawnEnemy(kind, x, z, boss) {
+function spawnEnemy(kind, x, z, boss = false) {
   const def = boss ? BOSSES[kind] : FOES[kind] || FOES.gromflomite;
   const m = createCharacter(kind);
   m.position.set(x, 0, z);
   m.userData.enemy = true;
-  m.userData.boss = !!boss;
+  m.userData.boss = boss;
   m.userData.kind = kind;
   m.userData.hp = def.hp;
   m.userData.maxHp = def.hp;
   m.userData.dmg = def.dmg;
-  m.userData.speed = def.speed;
-  m.userData.ai = (FOES[kind] && FOES[kind].ai) || (boss ? "boss" : "shoot");
-  m.userData.line = def.line;
-  m.userData.frozen = 0;
+  m.userData.speed = def.speed * 0.85;
+  m.userData.ai = (FOES[kind] && FOES[kind].ai) || (boss ? "boss" : "rush");
   m.userData.hitCd = 0;
   scene.add(m);
   enemies.push(m);
@@ -225,153 +211,172 @@ function spawnEnemy(kind, x, z, boss) {
   return m;
 }
 
-function spawnBoss() {
-  const d = DIMS[state.dim];
-  const o = dimOrigin(state.dim);
-  spawnEnemy(d.boss, o.x, o.z - 42, true);
+function spawnNpcs() {
+  const o = origin(0);
+  const list = [
+    ["morty", 6, 6, "Aw geez Rick, the gun actually works this time?"],
+    ["summer", 10, 4, "If you're so OP, portal the HOA into the sun."],
+    ["jerry", 14, 8, "I could have been in advertising."],
+    ["birdperson", -8, 10, "In bird culture this garage is considered a nest of poor choices."],
+  ];
+  for (const [id, x, z, line] of list) {
+    const n = createCharacter(id);
+    n.position.set(o.x + x, 0, o.z + z);
+    n.userData.npc = true;
+    n.userData.line = line;
+    scene.add(n);
+    npcs.push(n);
+  }
 }
 
 function initThree() {
+  portalTex = tex("assets/tex_portal.jpg");
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87aacc);
-  scene.fog = new THREE.Fog(0x87aacc, 40, 160);
-  camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 400);
+  scene.background = new THREE.Color(0x6aa4d8);
+  scene.fog = new THREE.Fog(0x6aa4d8, 35, 120);
+  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 300);
   renderer = new THREE.WebGLRenderer({ canvas: $("#view"), antialias: true });
   renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.6));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.shadowMap.enabled = true;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
   clock = new THREE.Clock();
+  raycaster = new THREE.Raycaster();
 
-  scene.add(new THREE.HemisphereLight(0xc8e8ff, 0x334422, 0.9));
-  const sun = new THREE.DirectionalLight(0xfff2d0, 0.85);
-  sun.position.set(20, 40, 10);
+  scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x3a4a30, 0.95));
+  const sun = new THREE.DirectionalLight(0xfff1cc, 1.05);
+  sun.position.set(18, 30, 12);
   sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
   scene.add(sun);
 
-  worldRoot = new THREE.Group();
-  scene.add(worldRoot);
-  DIMS.forEach((_, i) => buildDimension(i, worldRoot));
+  const world = new THREE.Group();
+  scene.add(world);
+  DIMS.forEach((_, i) => buildDim(i, world));
 
-  rick = createCharacter("rick");
-  rick.position.copy(dimOrigin(0)).add(new THREE.Vector3(6, 0, 12));
-  scene.add(rick);
+  player = createCharacter("rick");
+  player.position.set(0, 0, 2);
+  scene.add(player);
+  spawnNpcs();
 
-  window.addEventListener("resize", () => {
+  addEventListener("resize", () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
   });
 }
 
-function currentWeapon() {
-  return WEAPONS[state.weapon];
-}
-
-function shoot(alt) {
-  const now = performance.now() / 1000;
-  const w = currentWeapon();
-  const cd = 1 / (state.god ? w.rpm * 1.35 : w.rpm);
-  if (now - lastShot < cd) return;
-  lastShot = now;
-  const origin = rick.position.clone().add(new THREE.Vector3(0, 1.4, 0));
-  const dir = new THREE.Vector3(Math.sin(yaw), -pitch * 0.6, Math.cos(yaw)).normalize();
-  if (alt && w.alt === "portal") {
-    placePortal(origin, dir);
-    beep(420, 0.08);
-    return;
-  }
-  const dmg = (state.god ? w.dmg * 1.8 : w.dmg) * (1 + (state.level - 1) * 0.04);
-  if (w.alt === "aoe" && alt) {
-    explode(origin.clone().add(dir.clone().multiplyScalar(8)), dmg);
-    return;
-  }
-  const geo = new THREE.Mesh(
-    new THREE.SphereGeometry(0.12, 8, 8),
-    new THREE.MeshBasicMaterial({ color: w.color })
-  );
-  geo.position.copy(origin);
-  scene.add(geo);
-  bullets.push({
-    mesh: geo,
-    vel: dir.clone().multiplyScalar(48),
-    life: 1.6,
-    dmg,
-    freeze: w.alt === "freeze" || alt,
-    pierce: state.god ? 3 : 1,
+function firePortal() {
+  const dir = new THREE.Vector3(Math.sin(yaw), -pitch * 0.35, Math.cos(yaw)).normalize();
+  const origin = player.position.clone().add(new THREE.Vector3(0, 1.6, 0));
+  raycaster.set(origin, dir);
+  const hits = raycaster.intersectObjects(scene.children, true).filter((h) => {
+    let o = h.object;
+    while (o) {
+      if (o === player || o === portalMesh) return false;
+      if (o.userData?.enemy || o.userData?.npc) return false;
+      o = o.parent;
+    }
+    return h.distance < 48;
   });
-  beep(880, 0.04);
+  let pos, quat;
+  if (hits[0]) {
+    pos = hits[0].point.clone().add(hits[0].face.normal.clone().multiplyScalar(0.12));
+    const n = hits[0].face.normal.clone();
+    quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+  } else {
+    pos = origin.clone().add(dir.clone().multiplyScalar(10));
+    pos.y = Math.max(1.6, pos.y);
+    quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(pos, origin, new THREE.Vector3(0, 1, 0)));
+  }
+  if (portalMesh) scene.remove(portalMesh);
+  portalMesh = makeGreenPortal(portalTex);
+  portalMesh.position.copy(pos);
+  portalMesh.quaternion.copy(quat);
+  portalMesh.userData.dest = state.selectedDim;
+  scene.add(portalMesh);
+  beep(620, 0.09);
+  toast("Portal", DIMS[state.selectedDim].name);
 }
 
-function placePortal(origin, dir) {
-  const hit = origin.clone().add(dir.clone().multiplyScalar(18));
-  hit.y = 2.2;
-  const slot = portals[0] ? 1 : 0;
-  if (portals[slot]) scene.remove(portals[slot]);
-  const p = portalRing(scene, hit, slot ? 0xff9a3a : 0x40ffe6);
-  p.userData.slot = slot;
-  portals[slot] = p;
-  toast("Portal", slot ? "Orange hole punched." : "Blue hole punched.");
-}
-
-function explode(pos, dmg) {
-  for (const e of enemies) {
-    if (e.position.distanceTo(pos) < 8) hurt(e, dmg);
+function enterPortal() {
+  const dest = portalMesh.userData.dest ?? state.selectedDim;
+  const d = DIMS[dest];
+  if (!state.unlocked[d.id] && state.level < d.unlock) {
+    toast("Locked", `Need level ${d.unlock}`);
+    return;
   }
-  const s = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 8), new THREE.MeshBasicMaterial({ color: 0xb6ff40 }));
-  s.position.copy(pos);
-  scene.add(s);
-  particles.push({ mesh: s, t: 0.35, grow: 18 });
-}
-
-function hurt(e, dmg) {
-  if (e.userData.hp <= 0) return;
-  e.userData.hp -= dmg;
-  floatDmg(e.position, dmg);
-  e.position.add(e.position.clone().sub(rick.position).setY(0).normalize().multiplyScalar(0.6));
-  if (e.userData.hp <= 0) kill(e);
-  else if (e.userData.boss) {
-    const pct = Math.max(0, e.userData.hp / e.userData.maxHp);
-    $("#bossFill").style.width = pct * 100 + "%";
+  state.unlocked[d.id] = true;
+  state.dim = dest;
+  const o = origin(dest);
+  player.position.set(o.x, 0, o.z + 8);
+  scene.background = new THREE.Color(d.fog);
+  scene.fog.color = new THREE.Color(d.fog);
+  if (portalMesh) {
+    scene.remove(portalMesh);
+    portalMesh = null;
   }
-}
-
-function kill(e) {
-  const kind = e.userData.kind;
-  state.kills[kind] = (state.kills[kind] || 0) + 1;
-  const def = e.userData.boss ? BOSSES[kind] : FOES[kind];
-  if (def) {
-    state.xp += def.xp || 20;
-    state.cash += def.cash || 8;
-    toast(e.userData.boss ? "Boss down" : "Wubba", `${def.name} folded. +${def.xp} XP`);
-  }
-  if (e.userData.boss) {
-    state.bosses[kind] = true;
-    $("#boss").classList.remove("on");
-    if (kind === "president_morty") toast("Curve broken", "You walked off the Finite Curve. Morty is going to be annoying about it.");
-    maybeUnlock();
-  }
-  while (state.xp >= xpNeed()) {
-    state.xp -= xpNeed();
-    state.level++;
-    state.maxHp += 18;
-    state.hp = state.maxHp;
-    toast("Level " + state.level, "Rick gets even more illegally powerful.");
-  }
-  tickQuest();
-  scene.remove(e);
-  enemies = enemies.filter((x) => x !== e);
+  flash();
+  toast(d.name, d.desc);
+  if (QUESTS[state.quest]?.kind === "goto") completeQuest();
   save();
   refreshHud();
+  beep(180, 0.16);
 }
 
-function xpNeed() {
-  return Math.floor(80 * Math.pow(state.level, 1.25));
+function flash() {
+  const el = $("#flash");
+  el.classList.add("on");
+  setTimeout(() => el.classList.remove("on"), 220);
 }
 
-function maybeUnlock() {
-  DIMS.forEach((d) => {
-    if (state.level >= d.unlock) state.unlocked[d.id] = true;
-  });
+function shootGun() {
+  // OP blast from portal gun if not placing (hold shift to blast)
+  const dir = new THREE.Vector3(Math.sin(yaw), -pitch * 0.2, Math.cos(yaw));
+  const origin = player.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), new THREE.MeshBasicMaterial({ color: 0x88ff33 }));
+  ball.position.copy(origin);
+  scene.add(ball);
+  ball.userData = { vel: dir.normalize().multiplyScalar(42), life: 1.2, dmg: 160 };
+  bullets.push(ball);
+  beep(880, 0.04);
+}
+const bullets = [];
+
+function hurt(e, dmg) {
+  e.userData.hp -= dmg;
+  if (e.userData.boss) $("#bossFill").style.width = Math.max(0, e.userData.hp / e.userData.maxHp) * 100 + "%";
+  if (e.userData.hp <= 0) {
+    const kind = e.userData.kind;
+    const def = e.userData.boss ? BOSSES[kind] : FOES[kind];
+    state.kills[kind] = (state.kills[kind] || 0) + 1;
+    if (def) {
+      state.xp += def.xp || 20;
+      state.cash += def.cash || 8;
+      toast(e.userData.boss ? "Boss down" : "Wubba", def.name);
+    }
+    if (e.userData.boss) {
+      state.bosses[kind] = true;
+      $("#boss").classList.remove("on");
+    }
+    while (state.xp >= 80 * state.level) {
+      state.xp -= 80 * state.level;
+      state.level++;
+      state.maxHp += 16;
+      state.hp = state.maxHp;
+      DIMS.forEach((d) => {
+        if (state.level >= d.unlock) state.unlocked[d.id] = true;
+      });
+      toast("Level " + state.level, "Rick got worse (for everyone else).");
+      paintDims();
+    }
+    tickQuest();
+    scene.remove(e);
+    enemies = enemies.filter((x) => x !== e);
+    save();
+    refreshHud();
+  }
 }
 
 function tickQuest() {
@@ -380,439 +385,260 @@ function tickQuest() {
   if (q.kind === "kill" && (state.kills[q.target] || 0) >= (q.count || 1)) completeQuest();
   if (q.kind === "boss" && state.bosses[q.target]) completeQuest();
 }
-
 function completeQuest() {
   const q = QUESTS[state.quest];
   state.xp += q.xp;
   state.cash += q.cash;
-  toast("Quest done", q.name);
+  toast("Quest", q.name);
   state.quest = Math.min(state.quest + 1, QUESTS.length - 1);
   save();
+  refreshHud();
 }
 
-function floatDmg(pos, n) {
-  const el = document.createElement("div");
-  el.className = "dmg";
-  el.textContent = Math.floor(n);
-  el.style.left = innerWidth / 2 + "px";
-  el.style.top = innerHeight / 2 - 40 + "px";
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 700);
+function damageRick(n) {
+  state.hp -= n * 0.32;
+  beep(130, 0.07);
+  if (state.hp <= 0) {
+    state.hp = state.maxHp;
+    const o = origin(state.dim);
+    player.position.set(o.x, 0, o.z + 6);
+    toast("Immortal", "Rick doesn't die. That's the update.");
+  }
 }
 
-function beep(freq, dur) {
+function beep(f, d) {
   try {
     const ac = beep.ac || (beep.ac = new AudioContext());
     const o = ac.createOscillator();
     const g = ac.createGain();
-    o.frequency.value = freq;
     o.type = "square";
-    g.gain.value = 0.04;
+    o.frequency.value = f;
+    g.gain.value = 0.035;
     o.connect(g);
     g.connect(ac.destination);
     o.start();
-    o.stop(ac.currentTime + dur);
+    o.stop(ac.currentTime + d);
   } catch {}
 }
 
 function interact() {
   for (const n of npcs) {
-    if (n.position.distanceTo(rick.position) < 4) {
-      toast(n.userData.label || "NPC", n.userData.line);
-      if (QUESTS[state.quest]?.kind === "goto") completeQuest();
+    if (n.position.distanceTo(player.position) < 4.5) {
+      toast(n.userData.label, n.userData.line);
       return;
     }
   }
-  const d = DIMS[state.dim];
-  const o = dimOrigin(state.dim);
-  if (rick.position.distanceTo(new THREE.Vector3(o.x + 8, 1, o.z + 6)) < 5) {
-    openMenu("dims");
-  }
-}
-
-function travel(i) {
-  const d = DIMS[i];
-  if (!state.unlocked[d.id] && state.level < d.unlock) {
-    toast("Locked", "Level " + d.unlock + " or stop being a baby Morty.");
-    return;
-  }
-  state.unlocked[d.id] = true;
-  state.dim = i;
-  rick.position.copy(dimOrigin(i)).add(new THREE.Vector3(6, 0, 12));
-  scene.background = new THREE.Color(d.fog);
-  scene.fog.color = new THREE.Color(d.fog);
-  toast(d.name, d.desc);
-  save();
-  refreshHud();
-  closeMenu();
 }
 
 function update(dt) {
   const t = clock.elapsedTime;
-  const speed = (keys.ShiftLeft || keys.ShiftRight ? 22 : 14) * (state.god ? 1.25 : 1);
-  const forward = (keys.KeyW ? 1 : 0) + (keys.KeyS ? -1 : 0);
-  const strafe = (keys.KeyD ? 1 : 0) + (keys.KeyA ? -1 : 0);
-  const moving = !!(forward || strafe);
+  const speed = keys.ShiftLeft || keys.ShiftRight ? 18 : 11.5;
+  const f = (keys.KeyW ? 1 : 0) + (keys.KeyS ? -1 : 0);
+  const s = (keys.KeyD ? 1 : 0) + (keys.KeyA ? -1 : 0);
+  moving = !!(f || s);
   if (moving) {
-    rick.position.x += (Math.sin(yaw) * forward + Math.cos(yaw) * strafe) * speed * dt;
-    rick.position.z += (Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * speed * dt;
+    player.position.x += (Math.sin(yaw) * f + Math.cos(yaw) * s) * speed * dt;
+    player.position.z += (Math.cos(yaw) * f - Math.sin(yaw) * s) * speed * dt;
+    player.rotation.y = yaw;
   }
   if (keys.Space && grounded) {
-    vy = 9.5;
+    vy = 8.8;
     grounded = false;
   }
-  vy -= 22 * dt;
-  rick.position.y += vy * dt;
-  if (rick.position.y <= 0) {
-    rick.position.y = 0;
+  vy -= 24 * dt;
+  player.position.y += vy * dt;
+  if (player.position.y <= 0) {
+    player.position.y = 0;
     vy = 0;
     grounded = true;
   }
-  rick.rotation.y = yaw;
-  animateWalk(rick, t, moving);
+  animateWalk(player, t, moving);
+  npcs.forEach((n) => animateWalk(n, t, false));
 
-  // camera chase
-  const camOff = new THREE.Vector3(-Math.sin(yaw) * 6, 3.4 + pitch * 2, -Math.cos(yaw) * 6);
-  const want = rick.position.clone().add(camOff);
-  camera.position.lerp(want, 0.18);
-  camera.lookAt(rick.position.x, rick.position.y + 1.6, rick.position.z);
+  // Roblox-style chase cam
+  const back = new THREE.Vector3(-Math.sin(yaw) * 7.2, 3.3 + pitch * 2.4, -Math.cos(yaw) * 7.2);
+  camera.position.lerp(player.position.clone().add(back), 0.2);
+  camera.lookAt(player.position.x, player.position.y + 1.8, player.position.z);
 
-  // regen OP
-  if (state.hp < state.maxHp) state.hp = Math.min(state.maxHp, state.hp + (state.god ? 14 : 4) * dt);
+  if (state.hp < state.maxHp) state.hp = Math.min(state.maxHp, state.hp + 12 * dt);
+  $("#hpFill").style.width = (state.hp / state.maxHp) * 100 + "%";
 
-  // bullets
+  if (portalMesh) {
+    portalMesh.userData.disc.rotation.z += dt * 1.8;
+    portalMesh.userData.ring.rotation.z -= dt * 2.2;
+    if (player.position.distanceTo(portalMesh.position) < 2.1) enterPortal();
+  }
+
   for (const b of bullets) {
-    b.mesh.position.addScaledVector(b.vel, dt);
-    b.life -= dt;
-    if (b.enemy) {
-      if (b.mesh.position.distanceTo(rick.position.clone().setY(1.3)) < 1.2) {
-        damageRick(12);
-        b.life = 0;
-      }
-      continue;
-    }
+    b.position.addScaledVector(b.userData.vel, dt);
+    b.userData.life -= dt;
     for (const e of enemies) {
-      if (e.userData.hp > 0 && e.position.distanceTo(b.mesh.position) < (e.userData.radius || 1.1) + 0.4) {
-        hurt(e, b.dmg);
-        if (b.freeze) e.userData.frozen = 2.4;
-        b.pierce--;
-        if (b.pierce <= 0) b.life = 0;
+      if (e.userData.hp > 0 && e.position.distanceTo(b.position) < (e.userData.radius || 1) + 0.35) {
+        hurt(e, b.userData.dmg);
+        b.userData.life = 0;
       }
     }
   }
-  bullets = bullets.filter((b) => {
-    if (b.life <= 0) {
-      scene.remove(b.mesh);
-      return false;
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    if (bullets[i].userData.life <= 0) {
+      scene.remove(bullets[i]);
+      bullets.splice(i, 1);
     }
-    return true;
-  });
+  }
 
-  // enemy AI
   for (const e of enemies) {
     if (e.userData.hp <= 0) continue;
-    e.userData.frozen = Math.max(0, e.userData.frozen - dt);
-    animateWalk(e, t, e.userData.frozen <= 0);
-    if (e.userData.frozen > 0) continue;
-    const to = rick.position.clone().sub(e.position);
+    const to = player.position.clone().sub(e.position);
     to.y = 0;
     const dist = to.length();
     const dir = dist > 0.01 ? to.normalize() : new THREE.Vector3();
-    e.lookAt(rick.position.x, e.position.y, rick.position.z);
-    const ai = e.userData.ai;
-    if (ai === "cower") {
-      e.position.addScaledVector(dir, -e.userData.speed * dt);
-    } else if (ai === "rush" || ai === "swarm" || dist > 12) {
-      e.position.addScaledVector(dir, e.userData.speed * dt);
-    } else if (ai === "shoot" || ai === "boss") {
-      if (dist > 8) e.position.addScaledVector(dir, e.userData.speed * 0.6 * dt);
-      e.userData.hitCd -= dt;
-      if (e.userData.hitCd <= 0 && dist < 28) {
-        e.userData.hitCd = e.userData.boss ? 0.7 : 1.15;
-        enemyShot(e);
-      }
-    }
-    if (dist < 1.8) {
-      e.userData.hitCd -= dt;
-      if (e.userData.hitCd <= 0) {
-        e.userData.hitCd = 0.6;
-        damageRick(e.userData.dmg);
-      }
+    e.lookAt(player.position.x, e.position.y, player.position.z);
+    animateWalk(e, t, dist > 2);
+    if (dist > 2.2) e.position.addScaledVector(dir, e.userData.speed * dt);
+    e.userData.hitCd -= dt;
+    if (dist < 2.2 && e.userData.hitCd <= 0) {
+      e.userData.hitCd = 0.7;
+      damageRick(e.userData.dmg);
     }
   }
 
-  // player portals
-  if (portals[0] && portals[1]) {
-    for (const [a, b] of [
-      [portals[0], portals[1]],
-      [portals[1], portals[0]],
-    ]) {
-      if (rick.position.distanceTo(a.position) < 1.7) {
-        rick.position.copy(b.position).add(new THREE.Vector3(0, 0, 2));
-        beep(200, 0.12);
-      }
-    }
-    portals.forEach((p) => p && p.userData.spin && (p.userData.spin.rotation.z += dt * 3));
-  }
-
-  for (const p of particles) {
-    p.t -= dt;
-    p.mesh.scale.multiplyScalar(1 + dt * (p.grow || 4));
-    p.mesh.material.opacity = Math.max(0, p.t * 3);
-  }
-  particles = particles.filter((p) => {
-    if (p.t <= 0) {
-      scene.remove(p.mesh);
-      return false;
-    }
-    return true;
-  });
-
-  if (Math.random() < 0.002 && enemies.length < 14) {
+  if (Math.random() < 0.0018 && enemies.length < 12) {
     const d = DIMS[state.dim];
-    const o = dimOrigin(state.dim);
-    spawnEnemy(d.enemy, o.x + (Math.random() - 0.5) * 60, o.z + (Math.random() - 0.5) * 60);
-  }
-
-  $("#hpFill").style.width = (state.hp / state.maxHp) * 100 + "%";
-}
-
-function enemyShot(e) {
-  const dir = rick.position.clone().add(new THREE.Vector3(0, 1, 0)).sub(e.position.clone().setY(1.4)).normalize();
-  const geo = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), new THREE.MeshBasicMaterial({ color: 0xff4060 }));
-  geo.position.copy(e.position).add(new THREE.Vector3(0, 1.3, 0));
-  scene.add(geo);
-  bullets.push({
-    mesh: geo,
-    vel: dir.multiplyScalar(22),
-    life: 1.4,
-    dmg: 0,
-    enemy: true,
-    pierce: 1,
-  });
-}
-
-function damageRick(n) {
-  const taken = state.god ? n * 0.35 : n;
-  state.hp -= taken;
-  beep(140, 0.08);
-  if (state.hp <= 0) {
-    state.hp = state.maxHp;
-    rick.position.copy(dimOrigin(state.dim)).add(new THREE.Vector3(6, 0, 12));
-    toast("Portal liver", "Rick doesn't die. He just gets bored and respawns.");
+    const o = origin(state.dim);
+    spawnEnemy(d.enemy, o.x + (Math.random() - 0.5) * 36, o.z + (Math.random() - 0.5) * 36);
   }
 }
 
 function loop() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (lock || $("#overlay").classList.contains("hidden")) update(dt);
+  if ($("#overlay").classList.contains("hidden") && !$("#menu").classList.contains("on")) update(dt);
+  else if (player) {
+    camera.position.lerp(player.position.clone().add(new THREE.Vector3(0, 4, 8)), 0.05);
+    camera.lookAt(player.position.x, player.position.y + 1.5, player.position.z);
+  }
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
 
 function refreshHud() {
-  $("#lvl").textContent = `Lv ${state.level}  OP Rick`;
+  $("#lvl").textContent = `Rick  ·  Lv ${state.level}`;
   $("#dimName").textContent = DIMS[state.dim].name;
-  $("#cash").textContent = "$" + state.cash;
-  $("#xpFill").style.width = (state.xp / xpNeed()) * 100 + "%";
+  $("#cash").textContent = "₵ " + state.cash;
+  const need = 80 * state.level;
+  $("#xpFill").style.width = Math.min(100, (state.xp / need) * 100) + "%";
   const q = QUESTS[state.quest];
   $("#questName").textContent = q ? q.name : "Go be a menace";
   $("#questDesc").textContent = q ? q.desc : "";
-  document.querySelectorAll(".slot").forEach((s, i) => s.classList.toggle("on", i === state.weapon));
+}
+
+function paintDims() {
+  const box = $("#dimList");
+  box.innerHTML = DIMS.map((d, i) => {
+    const open = state.unlocked[d.id] || state.level >= d.unlock;
+    const on = state.selectedDim === i ? "on" : "";
+    const here = state.dim === i ? "here" : "";
+    return `<button class="dim-btn ${on} ${here}" data-i="${i}" ${open ? "" : "disabled"}>
+      <span class="dot"></span><span>${d.name}</span>
+    </button>`;
+  }).join("");
+  box.querySelectorAll(".dim-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.selectedDim = Number(b.dataset.i);
+      paintDims();
+      toast("Armed", DIMS[state.selectedDim].name);
+    })
+  );
 }
 
 function bind() {
   addEventListener("keydown", (e) => {
     keys[e.code] = true;
     if (e.code === "KeyE") interact();
-    if (e.code === "KeyQ") {
-      state.weapon = 2;
-      shoot(true);
-    }
     if (e.code === "KeyF") {
-      rick.position.add(new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(10));
-      beep(300, 0.1);
+      player.position.add(new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(9));
+      beep(280, 0.08);
     }
-    if (e.code === "KeyR") toast("Reload", "Portal fluid doesn't reload. That's the point.");
-    if (e.code === "Tab") {
+    if (e.code === "KeyB" || e.code === "Tab") {
       e.preventDefault();
-      openMenu("inv");
+      $("#menu").classList.toggle("on");
+      document.exitPointerLock();
     }
-    if (e.code === "KeyB") openMenu("dims");
-    if (e.code === "KeyM") openMenu("museum");
-    if (e.code.startsWith("Digit")) {
-      const n = Number(e.code.slice(5)) - 1;
-      if (n >= 0 && n < WEAPONS.length) state.weapon = n;
-      refreshHud();
+    if (e.code === "Escape") $("#menu").classList.remove("on");
+    if (e.code === "KeyH") {
+      spawnEnemy(DIMS[state.dim].boss, player.position.x, player.position.z - 12, true);
     }
-    if (e.code === "Escape") closeMenu();
   });
   addEventListener("keyup", (e) => (keys[e.code] = false));
   addEventListener("mousedown", (e) => {
     if (!$("#overlay").classList.contains("hidden")) return;
-    if (e.button === 0) shoot(false);
-    if (e.button === 2) shoot(true);
+    if ($("#menu").classList.contains("on")) return;
+    if (e.button === 0) firePortal();
+    if (e.button === 2) shootGun();
   });
   addEventListener("contextmenu", (e) => e.preventDefault());
   addEventListener("mousemove", (e) => {
     if (!lock) return;
-    yaw -= e.movementX * 0.0024;
-    pitch = Math.max(-0.6, Math.min(0.8, pitch + e.movementY * 0.002));
+    yaw -= e.movementX * 0.0022;
+    pitch = Math.max(-0.35, Math.min(0.7, pitch + e.movementY * 0.002));
   });
   $("#view").addEventListener("click", () => {
-    if ($("#overlay").classList.contains("hidden")) {
-      $("#view").requestPointerLock();
-    }
+    if ($("#overlay").classList.contains("hidden")) $("#view").requestPointerLock();
   });
   document.addEventListener("pointerlockchange", () => {
-    lock = document.pointerLockElement === $("#view") || document.pointerLockElement === document.body;
+    lock = document.pointerLockElement === $("#view");
   });
-
-  $("#play").onclick = start;
-  $("#museumBtn").onclick = () => {
+  $("#play").onclick = () => {
     $("#overlay").classList.add("hidden");
-    openMenu("museum");
+    $("#view").requestPointerLock();
+    toast("Portal Gun", "Pick a world on the right, then click to shoot a green portal. Walk through it.");
   };
-  $("#closeMenu").onclick = closeMenu;
-  document.querySelectorAll(".tabs button").forEach((b) =>
-    b.addEventListener("click", () => openMenu(b.dataset.tab))
-  );
-
-  // mobile
-  $("#atk").onclick = () => shoot(false);
-  $("#alt").onclick = () => shoot(true);
+  $("#closeMenu").onclick = () => $("#menu").classList.remove("on");
+  $("#summon").onclick = () => {
+    spawnEnemy(DIMS[state.dim].boss, player.position.x, player.position.z - 14, true);
+    $("#menu").classList.remove("on");
+  };
+  $("#reset").onclick = () => {
+    localStorage.removeItem("rickrift");
+    location.reload();
+  };
+  $("#atk").onclick = () => firePortal();
+  $("#alt").onclick = () => shootGun();
   $("#int").onclick = interact;
-  $("#mmenu").onclick = () => openMenu("dims");
-  bindStick();
-}
-
-function bindStick() {
+  $("#mmenu").onclick = () => $("#menu").classList.toggle("on");
   const stick = $("#stick");
   const knob = $("#knob");
-  let dragging = false;
-  const go = (ev) => {
-    const t = ev.touches ? ev.touches[0] : ev;
-    const r = stick.getBoundingClientRect();
-    const x = t.clientX - r.left - 60;
-    const y = t.clientY - r.top - 60;
-    const l = Math.min(40, Math.hypot(x, y));
-    const a = Math.atan2(y, x);
-    knob.style.left = 35 + Math.cos(a) * (l / 1.2) + "px";
-    knob.style.top = 35 + Math.sin(a) * (l / 1.2) + "px";
-    keys.KeyW = y < -10;
-    keys.KeyS = y > 10;
-    keys.KeyA = x < -10;
-    keys.KeyD = x > 10;
-  };
-  const end = () => {
-    dragging = false;
-    keys.KeyW = keys.KeyS = keys.KeyA = keys.KeyD = false;
-    knob.style.left = "35px";
-    knob.style.top = "35px";
-  };
-  stick.addEventListener("pointerdown", (e) => {
-    dragging = true;
-    go(e);
-  });
-  addEventListener("pointermove", (e) => dragging && go(e));
-  addEventListener("pointerup", end);
-}
-
-function start() {
-  $("#overlay").classList.add("hidden");
-  $("#view").requestPointerLock();
-  toast("Rick Sanchez", "You're overpowered. That's the joke AND the build.");
-  beep(220, 0.2);
-}
-
-function openMenu(tab) {
-  $("#menu").classList.add("on");
-  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
-  const pane = $("#pane");
-  if (tab === "dims") {
-    pane.innerHTML = DIMS.map(
-      (d, i) => `<div class="item"><div><b>${d.name}</b><div class="help">${d.desc}<br>Boss: ${BOSSES[d.boss].name}</div></div>
-      <button class="btn ${state.dim === i ? "cyan" : ""}" data-i="${i}">${state.unlocked[d.id] || state.level >= d.unlock ? "TRAVEL" : "LOCK"}</button></div>`
-    ).join("");
-    pane.querySelectorAll("button[data-i]").forEach((b) =>
-      b.addEventListener("click", () => travel(Number(b.dataset.i)))
-    );
-  } else if (tab === "inv") {
-    pane.innerHTML = WEAPONS.map(
-      (w, i) => `<div class="item"><div><b>${w.name}</b><div class="help">DMG ${w.dmg} · ${w.alt}</div></div>
-      <button class="btn" data-w="${i}">EQUIP</button></div>`
-    ).join("");
-    pane.querySelectorAll("button[data-w]").forEach((b) =>
-      b.addEventListener("click", () => {
-        state.weapon = Number(b.dataset.w);
-        refreshHud();
-        toast("Equipped", WEAPONS[state.weapon].name);
-      })
-    );
-  } else if (tab === "quests") {
-    pane.innerHTML = QUESTS.map(
-      (q, i) => `<div class="item"><div><b>${i === state.quest ? "▶ " : ""}${q.name}</b><div class="help">${q.desc}</div></div><div>${q.xp} XP</div></div>`
-    ).join("");
-  } else if (tab === "museum") {
-    renderMuseum(pane);
-  } else if (tab === "bestiary") {
-    pane.innerHTML = Object.entries({ ...FOES, ...BOSSES })
-      .map(
-        ([id, f]) =>
-          `<div class="item"><div><b>${f.name}</b><div class="help">${f.line || ""}</div></div><div>HP ${f.hp}</div></div>`
-      )
-      .join("");
-  } else {
-    pane.innerHTML = `<p class="help">WASD move · mouse look · click shoot · right-click portal/alt · Q freeze · E talk/portal · F dash · B dimensions · M Sketchfab museum · 1-5 weapons.<br><br>Rick regenerates, punches holes in reality, and does not stay dead. Bosses still hit back.</p>
-    <button class="btn" id="summon">SUMMON BOSS</button>
-    <button class="btn ghost" id="reset">Reset save</button>`;
-    $("#summon").onclick = () => {
-      spawnBoss();
-      closeMenu();
+  if (stick && knob) {
+    let drag = false;
+    const go = (ev) => {
+      const t = ev.touches ? ev.touches[0] : ev;
+      const r = stick.getBoundingClientRect();
+      const x = t.clientX - r.left - 60;
+      const y = t.clientY - r.top - 60;
+      keys.KeyW = y < -10;
+      keys.KeyS = y > 10;
+      keys.KeyA = x < -10;
+      keys.KeyD = x > 10;
     };
-    $("#reset").onclick = () => {
-      localStorage.removeItem("rickrift");
-      location.reload();
-    };
+    stick.addEventListener("pointerdown", (e) => {
+      drag = true;
+      go(e);
+    });
+    addEventListener("pointermove", (e) => drag && go(e));
+    addEventListener("pointerup", () => {
+      drag = false;
+      keys.KeyW = keys.KeyS = keys.KeyA = keys.KeyD = false;
+    });
   }
-  document.exitPointerLock();
-}
-
-let museumIndex = 0;
-function renderMuseum(pane) {
-  const m = MUSEUM[museumIndex];
-  pane.innerHTML = `
-    <h3 style="color:var(--lime)">${m.name}</h3>
-    <p class="help">Fan model by <b>${m.artist}</b> · ${m.license} · official Sketchfab embed (not ripped).</p>
-    <div class="sf-nav">
-      <button class="btn ghost" id="sfPrev">Prev</button>
-      <button class="btn cyan" id="sfNext">Next</button>
-      <a class="btn ghost" href="https://sketchfab.com/3d-models/${m.uid}" target="_blank" rel="noopener">Open on Sketchfab</a>
-    </div>
-    <iframe class="sf-frame" title="${m.name}" src="https://sketchfab.com/models/${m.uid}/embed?autostart=1&ui_theme=dark&ui_infos=0&ui_watermark=0" allow="autoplay; fullscreen; xr-spatial-tracking" allowfullscreen></iframe>
-    <p class="help" style="margin-top:8px">${museumIndex + 1} / ${MUSEUM.length} · Combat uses original in-engine cartoon rigs so the game stays playable. Sketchfab is the lookbook.</p>`;
-  $("#sfPrev").onclick = () => {
-    museumIndex = (museumIndex + MUSEUM.length - 1) % MUSEUM.length;
-    renderMuseum(pane);
-  };
-  $("#sfNext").onclick = () => {
-    museumIndex = (museumIndex + 1) % MUSEUM.length;
-    renderMuseum(pane);
-  };
-}
-
-function closeMenu() {
-  $("#menu").classList.remove("on");
 }
 
 export function boot() {
-  load();
-  maybeUnlock();
+  loadSave();
+  DIMS.forEach((d) => {
+    if (state.level >= d.unlock) state.unlocked[d.id] = true;
+  });
   initThree();
   bind();
+  paintDims();
   refreshHud();
-  document.querySelectorAll(".slot").forEach((s, i) => {
-    if (WEAPONS[i]) s.textContent = `${i + 1}\n${WEAPONS[i].name.split(" ")[0]}`;
-  });
   loop();
 }

@@ -3,45 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-    <title>RICK RIFT — Wubba Lubba Dub Dub</title>
-    <meta name="description" content="Fan-made Rick and Morty browser combat game. Rick is overpowered. Sketchfab lookbook + original 3D combat." />
+    <title>RICK RIFT — Portal Gun</title>
     <link rel="stylesheet" href="css/style.css" />
   </head>
   <body>
     <canvas id="view"></canvas>
     <div id="ui">
+      <div id="flash"></div>
       <div class="hud-top">
         <div class="row">
-          <div class="name" id="lvl">Lv 1  OP Rick</div>
+          <div class="name" id="lvl">Rick  ·  Lv 1</div>
           <div class="dim" id="dimName">Smith Residence</div>
         </div>
         <div class="bar"><i id="hpFill"></i></div>
         <div class="bar xp"><i id="xpFill"></i></div>
-        <div class="meta"><span id="cash">$40</span><span>Portal fluid: infinite</span></div>
+        <div class="meta"><span id="cash">₵ 40</span><span>Portal gun equipped</span></div>
       </div>
       <div class="quest">
-        <h3>CURRENT ERRAND</h3>
+        <h3>QUEST</h3>
         <p id="questName">The Garage Is a Mouth</p>
-        <small id="questDesc">Walk to the glowing portal.</small>
+        <small id="questDesc">Shoot a portal. Walk through it.</small>
       </div>
       <div class="boss" id="boss">
-        <div class="row"><b id="bossName">Boss</b><span>PHASE</span></div>
+        <div class="row"><b id="bossName">Boss</b></div>
         <div class="bar"><i id="bossFill"></i></div>
       </div>
+      <div class="dim-panel hit">
+        <h4>DIMENSIONS</h4>
+        <div id="dimList"></div>
+      </div>
       <div class="cross"></div>
-      <div class="hint" id="hint">Click to capture mouse · E talk · B portals · M Sketchfab</div>
+      <div class="hint">Click = green portal · Right-click = blast · E talk · F dash · H summon boss</div>
       <div class="toast-wrap" id="toasts"></div>
       <div class="hotbar">
-        <div class="slot on">1</div>
-        <div class="slot">2</div>
-        <div class="slot">3</div>
-        <div class="slot">4</div>
-        <div class="slot">5</div>
+        <div class="slot on">PORTAL<br />GUN</div>
       </div>
       <div class="mobile hit">
         <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
-        <button class="fab atk" id="atk">PEW</button>
-        <button class="fab alt" id="alt">PORTAL</button>
+        <button class="fab atk" id="atk">PORTAL</button>
+        <button class="fab alt" id="alt">BLAST</button>
         <button class="fab int" id="int">E</button>
         <button class="fab menu" id="mmenu">MENU</button>
       </div>
@@ -50,47 +50,29 @@
     <div id="overlay">
       <div class="card">
         <div class="logo">RICK RIFT</div>
-        <div class="sub">Fan combat sandbox · Rick is illegally overpowered</div>
-        <div class="grid">
-          <div>
-            <p class="help">
-              You are <b>Rick Sanchez</b>. Portal gun, freeze ray, death crystal, grenades, dash, regen, and you don't stay dead.
-              Fight Meeseeks, Gromflomites, Council Ricks, Scary Terry, Tammy, Unity, Abradolf, Zeep, Cromulon, Evil Morty, and President Morty.
-            </p>
-            <p class="help">
-              10 dimensions. Quests. Local save. Sketchfab museum of CC fan models (official embeds — not stolen files).
-            </p>
-          </div>
-          <div>
-            <button class="btn" id="play">I'M RICK, LET ME OUT</button>
-            <button class="btn ghost" id="museumBtn" style="margin-top: 8px; width: 100%">Sketchfab lookbook</button>
-            <p class="help">
-              WASD · mouse · click shoot · RMB portal · Q freeze · F dash · E talk · B travel · 1–5 guns
-            </p>
-          </div>
-        </div>
-        <div class="credits">
-          Fan project. Rick and Morty belong to their owners. In-game fighters are original low-poly cartoon rigs.
-          Sketchfab models stay on Sketchfab via embed and are credited to their artists (CC licenses).
-          Not affiliated with Adult Swim.
-        </div>
+        <div class="sub">Third-person portal gun · garage hub · pick a world, shoot a hole in it</div>
+        <p class="help">
+          This is the Roblox-style loop: spawn in the garage, hold the portal gun, tap a dimension on the <b>right</b>,
+          <b>click</b> to fire a green portal, walk through. Rick is overpowered and immortal. Right-click melts whoever's in the way.
+        </p>
+        <button class="btn" id="play" style="margin-top: 16px">EQUIP PORTAL GUN</button>
+        <p class="help" style="margin-top: 12px">WASD · mouse look (click the game) · Space jump · Shift sprint</p>
+        <div class="credits">Fan game. Not affiliated with Adult Swim. Characters are original toon rigs with custom face decals — not ripped Sketchfab meshes.</div>
       </div>
     </div>
 
     <div id="menu">
       <div class="menu-box hit">
         <div class="tabs">
-          <button data-tab="dims">Dimensions</button>
-          <button data-tab="inv">Weapons</button>
-          <button data-tab="quests">Quests</button>
-          <button data-tab="bestiary">Bestiary</button>
-          <button data-tab="museum">Sketchfab</button>
-          <button data-tab="help">Help</button>
           <button class="btn ghost" id="closeMenu">Close</button>
         </div>
-        <div class="pane" id="pane"></div>
+        <div class="pane">
+          <p class="help">H — summon this world's boss. F — dash. Right-click — OP blast. Portals are the point.</p>
+          <button class="btn" id="summon">SUMMON BOSS</button>
+          <button class="btn ghost" id="reset" style="margin-top: 8px">Reset save</button>
+        </div>
       </div>
     </div>
-    <script type="module" src="js/main.js"></script>
+    <script type="module" src="js/main.js?v=2"></script>
   </body>
 </html>
