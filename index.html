@@ -17,7 +17,7 @@
         </div>
         <div class="bar"><i id="hpFill"></i></div>
         <div class="bar xp"><i id="xpFill"></i></div>
-        <div class="meta"><span id="cash">₵ 40</span><span>Portal gun equipped</span></div>
+        <div class="meta"><span id="cash">$50</span><span id="kills">0 wasted</span><span id="wanted">☆☆☆☆☆</span></div>
       </div>
       <div class="quest">
         <h3>QUEST</h3>
@@ -33,15 +33,15 @@
         <div id="dimList"></div>
       </div>
       <div class="cross"></div>
-      <div class="hint">Click = green portal · Right-click = blast · E talk · F dash · H summon boss</div>
+      <div class="hint">Left click = kill · E = carjack · Right click = portal · F = dash</div>
       <div class="toast-wrap" id="toasts"></div>
       <div class="hotbar">
         <div class="slot on">PORTAL<br />GUN</div>
       </div>
       <div class="mobile hit">
         <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
-        <button class="fab atk" id="atk">PORTAL</button>
-        <button class="fab alt" id="alt">BLAST</button>
+        <button class="fab atk" id="atk">PEW</button>
+        <button class="fab alt" id="alt">PORTAL</button>
         <button class="fab int" id="int">E</button>
         <button class="fab menu" id="mmenu">MENU</button>
       </div>
@@ -50,13 +50,14 @@
     <div id="overlay">
       <div class="card">
         <div class="logo">RICK RIFT</div>
-        <div class="sub">Third-person portal gun · garage hub · pick a world, shoot a hole in it</div>
+        <div class="sub">GTA sandbox · you're Rick · the street is full of people you can waste</div>
         <p class="help">
-          This is the Roblox-style loop: spawn in the garage, hold the portal gun, tap a dimension on the <b>right</b>,
-          <b>click</b> to fire a green portal, walk through. Rick is overpowered and immortal. Right-click melts whoever's in the way.
+          Open world suburb. Civilians, Mortys, Meeseeks, and space-cops walking around.
+          <b>Left click</b> shoots the portal gun. <b>E</b> steals a car. <b>Right click / Q</b> opens a green portal.
+          Wanted stars go up when you catch bodies. Rick does not stay dead.
         </p>
-        <button class="btn" id="play" style="margin-top: 16px">EQUIP PORTAL GUN</button>
-        <p class="help" style="margin-top: 12px">WASD · mouse look (click the game) · Space jump · Shift sprint</p>
+        <button class="btn" id="play" style="margin-top: 16px">I'M RICK</button>
+        <p class="help" style="margin-top: 12px">WASD move · mouse look · Shift sprint · Space jump · F dash</p>
         <div class="credits">Fan game. Not affiliated with Adult Swim. Characters are original toon rigs with custom face decals — not ripped Sketchfab meshes.</div>
       </div>
     </div>
@@ -73,6 +74,6 @@
         </div>
       </div>
     </div>
-    <script type="module" src="js/main.js?v=2"></script>
+    <script type="module" src="js/main.js?v=3"></script>
   </body>
 </html>
